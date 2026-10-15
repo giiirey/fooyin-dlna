@@ -1,0 +1,106 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FOOYIN_VERSION: v0.13.1
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+jobs:
+  build:
+    name: Plugin (Linux x86_64)
+    # Built on the oldest distro that ships fooyin, so the resulting
+    # .so is forward-compatible with every newer distro (Qt 6, glibc
+    # and libstdc++ are all forward-compatible within these versions).
+    container: debian:bookworm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            git build-essential cmake ninja-build pkg-config ccache \
+            qt6-base-dev libqt6svg6-dev libqt6sql6-sqlite \
+            libicu-dev zlib1g-dev libarchive-dev \
+            libavcodec-dev libavfilter-dev libavformat-dev \
+            libavutil-dev libswresample-dev \
+            libtag1-dev libxkbcommon-dev
+
+      - name: ccache
+        id: ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: fooyin-${{ env.FOOYIN_VERSION }}-plugin-ccache-
+          lookup-only: 'true'
+
+      - name: Build and install fooyin (headers + CMake config)
+        run: |
+          git clone --depth 1 --branch $FOOYIN_VERSION \
+            https://github.com/fooyin/fooyin.git
+          cd fooyin
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DINSTALL_HEADERS=ON \
+            -DBUILD_PLUGINS=OFF \
+            -DBUILD_TRANSLATIONS=OFF \
+            -DBUILD_CCACHE=ON
+          cmake --build build --parallel
+          cmake --install build
+
+      - name: Build plugin
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Show shared library dependencies
+        run: ldd build/dlna/fyplugin_dlna.so
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp build/dlna/fyplugin_dlna.so dist/
+          (cd dist && sha256sum fyplugin_dlna.so > fyplugin_dlna.so.sha256)
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fyplugin_dlna-linux-x86_64
+          path: dist/
+          retention-days: 14
+
+      - name: Save ccache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: fooyin-${{ env.FOOYIN_VERSION }}-plugin-ccache-
+
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/fyplugin_dlna.so
+            dist/fyplugin_dlna.so.sha256
+          generate_release_notes: true

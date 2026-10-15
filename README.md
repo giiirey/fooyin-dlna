@@ -11,7 +11,22 @@ A plugin for [fooyin](https://fooyin.org/) 0.13.x: browse and play audio from DL
 - Send tracks: Play (temporary playlist + start playback), Add (to the current playlist), Queue (to the queue).
 - fooyin plays HTTP streams natively — no custom decoder is needed.
 
-## Building
+## Installation
+
+### Prebuilt binary (recommended)
+
+Prebuilt `fyplugin_dlna.so` for Linux x86_64 is published on the [releases page](./releases). Download the latest one and put it into the plugins directory:
+
+```sh
+mkdir -p ~/.local/lib/fooyin/plugins
+cp fyplugin_dlna.so ~/.local/lib/fooyin/plugins/
+```
+
+Restart fooyin. Menu entry: **View → DLNA Browser**.
+
+No extra packages are needed: the binary links against the Qt 6 and fooyin libraries your system already has. It is built against the oldest supported fooyin/Qt baseline (Debian 12), so the same `.so` works on every distro that ships fooyin 0.13.x (Debian, Ubuntu, Fedora, Arch, openSUSE, ...).
+
+### Build from source
 
 Requirements: CMake ≥ 3.16, Qt 6 (Core, Network, Widgets), fooyin 0.13.x installed with headers and CMake configuration.
 
@@ -20,18 +35,7 @@ cmake -B build
 cmake --build build
 ```
 
-Result: `build/dlna/fyplugin_dlna.so`.
-
-## Installation
-
-Copy (or symlink) the `.so` into the user plugins directory:
-
-```sh
-mkdir -p ~/.local/lib/fooyin/plugins
-cp build/dlna/fyplugin_dlna.so ~/.local/lib/fooyin/plugins/
-```
-
-Restart fooyin. Menu entry: **View → DLNA Browser**.
+Then copy (or symlink) the result, `build/dlna/fyplugin_dlna.so`, into the plugins directory as above and restart fooyin.
 
 ## Structure
 
