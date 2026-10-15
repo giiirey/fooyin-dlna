@@ -1,0 +1,43 @@
+# Build directories
+build/
+out/
+
+# CMake (in-source builds)
+CMakeCache.txt
+CMakeFiles/
+CMakeSettings.json
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+Makefile
+compile_commands.json
+
+# Qt
+*.autosave
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.qmlc
+
+# Compiled objects and libraries
+*.o
+*.obj
+*.so
+*.so.*
+*.dylib
+*.dll
+*.a
+*.lib
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.user
+*.swp
+
+# OpenCode
+opencode.json
