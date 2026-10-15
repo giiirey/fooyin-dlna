@@ -17,6 +17,7 @@ jobs:
     # Built on the oldest distro that ships fooyin, so the resulting
     # .so is forward-compatible with every newer distro (Qt 6, glibc
     # and libstdc++ are all forward-compatible within these versions).
+    runs-on: ubuntu-24.04
     container: debian:bookworm
     steps:
       - name: Checkout
