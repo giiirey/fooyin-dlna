@@ -21,13 +21,14 @@ jobs:
     container: debian:bookworm
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            git build-essential cmake ninja-build pkg-config ccache \
+            ca-certificates \
+             git build-essential cmake ninja-build pkg-config ccache \
             qt6-base-dev libqt6svg6-dev libqt6sql6-sqlite \
             libicu-dev zlib1g-dev libarchive-dev \
             libavcodec-dev libavfilter-dev libavformat-dev \
@@ -36,7 +37,7 @@ jobs:
 
       - name: ccache
         id: ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: fooyin-${{ env.FOOYIN_VERSION }}-plugin-ccache-
@@ -71,7 +72,7 @@ jobs:
           (cd dist && sha256sum fyplugin_dlna.so > fyplugin_dlna.so.sha256)
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fyplugin_dlna-linux-x86_64
           path: dist/
@@ -79,7 +80,7 @@ jobs:
 
       - name: Save ccache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.ccache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: fooyin-${{ env.FOOYIN_VERSION }}-plugin-ccache-
@@ -93,13 +94,13 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/fyplugin_dlna.so
