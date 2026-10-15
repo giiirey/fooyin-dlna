@@ -15,7 +15,7 @@ A plugin for [fooyin](https://fooyin.org/) 0.13.x: browse and play audio from DL
 
 ### Prebuilt binary (recommended)
 
-Prebuilt `fyplugin_dlna.so` for Linux x86_64 is published on the [releases page](./releases). Download the latest one and put it into the plugins directory:
+Prebuilt `fyplugin_dlna.so` for Linux x86_64 is published on the [releases page](https://github.com/giiirey/fooyin-dlna/releases). Download the latest one and put it into the plugins directory:
 
 ```sh
 mkdir -p ~/.local/lib/fooyin/plugins
@@ -53,10 +53,10 @@ Then copy (or symlink) the result, `build/dlna/fyplugin_dlna.so`, into the plugi
 
 ## Tests
 
-The integration test (`/tmp/dlnatest` during development) verifies the full cycle:
+The integration test during development verifies the full cycle:
 `normaliseBaseUrl → resolve → browse root → browse Music → All Music → Track`.
 
-Tested against MiniDLNA 1.3.0 (Keenetic Giga, `192.168.1.1:8200`), 2771 tracks.
+Tested against MiniDLNA 1.3.0 (Keenetic Giga), 2771 tracks.
 
 ## Plans
 
