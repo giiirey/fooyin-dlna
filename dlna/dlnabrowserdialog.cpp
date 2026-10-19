@@ -27,14 +27,20 @@
 #include <gui/guiconstants.h>
 #include <utils/actions/actionmanager.h>
 #include <utils/actions/command.h>
+#include <utils/fypaths.h>
 
 #include <QAction>
 #include <QAbstractItemView>
+#include <QComboBox>
+#include <QDir>
+#include <QFile>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
-#include <QLineEdit>
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableView>
@@ -73,6 +79,11 @@ QString formatSize(qint64 bytes)
         ++u;
     }
     return QString::asprintf("%.1f %s", v, units[u]);
+}
+
+QString serversFilePath()
+{
+    return Utils::statePath(u"dlna"_s) + u"/dlna_servers.json"_s;
 }
 
 QString codecName(const QString& mimeType)
@@ -183,8 +194,10 @@ DlnaBrowserDialog::DlnaBrowserDialog(QNetworkAccessManager* network, TrackSelect
     , m_provider{provider}
     , m_addCurrentAction{nullptr}
     , m_context{nullptr}
-    , m_serverEdit{nullptr}
+    , m_serverCombo{nullptr}
     , m_connectButton{nullptr}
+    , m_addServerButton{nullptr}
+    , m_removeServerButton{nullptr}
     , m_statusLabel{nullptr}
     , m_tree{nullptr}
     , m_table{nullptr}
@@ -215,6 +228,14 @@ DlnaBrowserDialog::DlnaBrowserDialog(QNetworkAccessManager* network, TrackSelect
     connect(m_controller, &DlnaBrowserController::connected, this, &DlnaBrowserDialog::onConnected);
     connect(m_controller, &DlnaBrowserController::connectFailed, this, &DlnaBrowserDialog::onConnectFailed);
     connect(m_controller, &DlnaBrowserController::childrenLoaded, this, &DlnaBrowserDialog::onChildrenLoaded);
+
+    loadServers();
+    refreshServerCombo();
+    if(!m_servers.isEmpty()) {
+        // Reconnect to the most recently used server automatically.
+        m_serverCombo->setCurrentIndex(m_servers.size() - 1);
+        onConnect();
+    }
 }
 
 void DlnaBrowserDialog::setupUi()
@@ -226,11 +247,18 @@ void DlnaBrowserDialog::setupUi()
 
     auto* topRow = new QHBoxLayout;
     topRow->addWidget(new QLabel(tr("Server:")));
-    m_serverEdit = new QLineEdit;
-    m_serverEdit->setPlaceholderText(tr("host:port, e.g. 192.168.1.1:8200"));
-    m_serverEdit->setClearButtonEnabled(true);
+    m_serverCombo = new QComboBox;
+    m_serverCombo->setEditable(true);
+    m_serverCombo->setInsertPolicy(QComboBox::NoInsert);
+    m_serverCombo->setPlaceholderText(tr("host:port, e.g. 192.168.1.1:8200"));
+    m_addServerButton = new QPushButton(tr("Add"));
+    m_addServerButton->setToolTip(tr("Remember this server address"));
+    m_removeServerButton = new QPushButton(tr("Remove"));
+    m_removeServerButton->setToolTip(tr("Forget the selected server"));
     m_connectButton = new QPushButton(tr("Connect"));
-    topRow->addWidget(m_serverEdit, 1);
+    topRow->addWidget(m_serverCombo, 1);
+    topRow->addWidget(m_addServerButton);
+    topRow->addWidget(m_removeServerButton);
     topRow->addWidget(m_connectButton);
     mainLayout->addLayout(topRow);
 
@@ -277,6 +305,8 @@ void DlnaBrowserDialog::setupUi()
     mainLayout->addLayout(bottomRow);
 
     connect(m_connectButton, &QPushButton::clicked, this, &DlnaBrowserDialog::onConnect);
+    connect(m_addServerButton, &QPushButton::clicked, this, &DlnaBrowserDialog::onAddServer);
+    connect(m_removeServerButton, &QPushButton::clicked, this, &DlnaBrowserDialog::onRemoveServer);
     connect(m_playButton, &QPushButton::clicked, this, &DlnaBrowserDialog::playSelected);
     connect(m_addButton, &QPushButton::clicked, this, &DlnaBrowserDialog::addToPlaylist);
     connect(m_queueButton, &QPushButton::clicked, this, &DlnaBrowserDialog::queueSelected);
@@ -303,7 +333,7 @@ void DlnaBrowserDialog::setupUi()
 
 void DlnaBrowserDialog::onConnect()
 {
-    const QString hostPort = m_serverEdit->text().trimmed();
+    const QString hostPort = currentServerAddress();
     if(hostPort.isEmpty()) {
         setStatus(tr("Enter a server address."));
         return;
@@ -318,11 +348,177 @@ void DlnaBrowserDialog::onConnect()
     m_controller->connectServer(hostPort);
 }
 
+QString DlnaBrowserDialog::currentServerAddress() const
+{
+    const int index = m_serverCombo->currentIndex();
+    const QString text = m_serverCombo->currentText().trimmed();
+    if(index >= 0 && index < m_serverCombo->count() && m_serverCombo->itemText(index) == text) {
+        // The displayed text matches a list entry; use its stored address
+        // (the display text may include the friendly name).
+        const QString address = m_serverCombo->itemData(index).toString();
+        if(!address.isEmpty()) {
+            return address;
+        }
+    }
+    // Otherwise the user typed an address directly.
+    return text;
+}
+
+void DlnaBrowserDialog::onAddServer()
+{
+    const QString address = currentServerAddress();
+    if(address.isEmpty()) {
+        return;
+    }
+    bool found{false};
+    for(const DlnaServerRecord& r : m_servers) {
+        if(r.address == address) {
+            found = true;
+            break;
+        }
+    }
+    if(found) {
+        return;
+    }
+    m_servers.push_back(DlnaServerRecord{address, {}});
+    persistServers();
+    refreshServerCombo();
+}
+
+void DlnaBrowserDialog::onRemoveServer()
+{
+    const int index = m_serverCombo->currentIndex();
+    if(index < 0 || index >= static_cast<int>(m_servers.size())) {
+        return;
+    }
+    // Only remove when an entry is genuinely selected (the displayed text
+    // matches the current entry); otherwise the index may be stale from a
+    // previously selected item while the user typed a new address.
+    if(m_serverCombo->itemText(index) != m_serverCombo->currentText()) {
+        return;
+    }
+    m_servers.removeAt(index);
+    persistServers();
+    refreshServerCombo();
+}
+
+void DlnaBrowserDialog::rememberServer(const QString& address, const QString& name)
+{
+    if(address.isEmpty()) {
+        return;
+    }
+    // Upsert: update the name if the address is already remembered and
+    // move the entry to the end (most recently used last).
+    for(int i = 0; i < static_cast<int>(m_servers.size()); ++i) {
+        DlnaServerRecord& r = m_servers[i];
+        if(r.address == address) {
+            r.name = name;
+            m_servers.move(i, static_cast<int>(m_servers.size()) - 1);
+            persistServers();
+            refreshServerCombo();
+            return;
+        }
+    }
+    m_servers.push_back(DlnaServerRecord{address, name});
+    persistServers();
+    refreshServerCombo();
+}
+
+void DlnaBrowserDialog::loadServers()
+{
+    const QString path = serversFilePath();
+    QFile file{path};
+    if(!file.open(QIODevice::ReadOnly)) {
+        return;
+    }
+
+    QJsonParseError error{};
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    if(error.error != QJsonParseError::NoError || !document.isArray()) {
+        return;
+    }
+
+    for(const QJsonValue& value : document.array()) {
+        const QJsonObject obj = value.toObject();
+        const QString address = obj.value(u"address"_s).toString().trimmed();
+        if(address.isEmpty()) {
+            continue;
+        }
+        bool duplicate{false};
+        for(const DlnaServerRecord& r : m_servers) {
+            if(r.address == address) {
+                duplicate = true;
+                break;
+            }
+        }
+        if(!duplicate) {
+            m_servers.push_back(DlnaServerRecord{address, obj.value(u"name"_s).toString()});
+        }
+    }
+}
+
+void DlnaBrowserDialog::persistServers()
+{
+    QJsonArray array;
+    for(const DlnaServerRecord& r : m_servers) {
+        QJsonObject obj;
+        obj[u"address"_s] = r.address;
+        obj[u"name"_s] = r.name;
+        array.append(obj);
+    }
+
+    const QString path = serversFilePath();
+    if(!QDir().mkpath(path.mid(0, path.lastIndexOf(u'/')))) {
+        return;
+    }
+
+    QFile file{path};
+    if(!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+    file.write(QJsonDocument(array).toJson(QJsonDocument::Compact));
+}
+
+void DlnaBrowserDialog::refreshServerCombo()
+{
+    // Remember which address should stay selected across the rebuild
+    // (either a list entry or a typed address).
+    const QString desiredAddress = currentServerAddress();
+
+    m_serverCombo->blockSignals(true);
+    m_serverCombo->clear();
+    for(const DlnaServerRecord& r : m_servers) {
+        const QString display = r.name.isEmpty() ? r.address : r.name + u" (" + r.address + u")";
+        m_serverCombo->addItem(display, r.address);
+    }
+    m_serverCombo->blockSignals(false);
+
+    int match{-1};
+    for(int i = 0; i < m_serverCombo->count(); ++i) {
+        if(m_serverCombo->itemData(i).toString() == desiredAddress) {
+            match = i;
+            break;
+        }
+    }
+    if(match >= 0) {
+        m_serverCombo->setCurrentIndex(match);
+    }
+    else {
+        // No matching entry: keep the typed address (or leave empty).
+        m_serverCombo->setCurrentIndex(-1);
+        m_serverCombo->setEditText(desiredAddress);
+    }
+
+    m_addServerButton->setEnabled(!m_serverCombo->currentText().trimmed().isEmpty());
+    m_removeServerButton->setEnabled(m_serverCombo->count() > 0);
+}
+
 void DlnaBrowserDialog::onConnected(const DlnaDeviceInfo& info)
 {
     m_connected = true;
     m_connectButton->setEnabled(true);
     setStatus(tr("Connected to %1 (%2)").arg(info.friendlyName, info.base));
+    rememberServer(currentServerAddress(), info.friendlyName);
     // Go through loadContainer() so the root browse is tracked in
     // m_pendingObjectId and its response is not discarded as "stale".
     loadContainer(u"0"_s);

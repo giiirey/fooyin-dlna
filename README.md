@@ -61,7 +61,6 @@ Tested against MiniDLNA 1.3.0 (Keenetic Giga), 2771 tracks.
 ## Plans
 
 - SSDP server discovery (M-SEARCH, `urn:schemas-upnp-org:device:MediaServer:1`).
-- Persisting the server list between runs.
 
 ## License
 

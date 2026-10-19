@@ -32,10 +32,11 @@
 #include <QAbstractTableModel>
 #include <QDialog>
 #include <QHash>
+#include <QList>
 #include <QSet>
 
 class QAction;
-class QLineEdit;
+class QComboBox;
 class QPushButton;
 class QLabel;
 class QTreeWidget;
@@ -47,6 +48,16 @@ class ActionManager;
 } // namespace Fooyin
 
 namespace Fooyin::Dlna {
+/*!
+ * A remembered DLNA server: the user-supplied address ("host:port" or a
+ * URL) and, when known, the server's friendly name from its description.
+ */
+struct DlnaServerRecord
+{
+    QString address;
+    QString name;
+};
+
 /*!
  * Table model over a list of DLNA items (playable media).
  */
@@ -115,8 +126,15 @@ private:
     void queueSelected();
     void executeAction(TrackAction action);
     void updateActionState();
+    void loadServers();
+    void persistServers();
+    void refreshServerCombo();
+    void onAddServer();
+    void onRemoveServer();
+    void rememberServer(const QString& address, const QString& name);
     [[nodiscard]] bool addCurrentPlaylistEnabled() const;
     [[nodiscard]] DlnaEntryList selectedEntries() const;
+    [[nodiscard]] QString currentServerAddress() const;
     void setStatus(const QString& text);
 
     DlnaBrowserController* m_controller;
@@ -126,8 +144,10 @@ private:
     QAction* m_addCurrentAction;
     WidgetContext* m_context;
 
-    QLineEdit* m_serverEdit;
+    QComboBox* m_serverCombo;
     QPushButton* m_connectButton;
+    QPushButton* m_addServerButton;
+    QPushButton* m_removeServerButton;
     QLabel* m_statusLabel;
     QTreeWidget* m_tree;
     QTableView* m_table;
@@ -140,6 +160,7 @@ private:
     QHash<QString, QTreeWidgetItem*> m_treeItems;
     QSet<QString> m_loadedObjects;
     QString m_pendingObjectId;
+    QList<DlnaServerRecord> m_servers;
     bool m_connected{false};
 };
 } // namespace Fooyin::Dlna
