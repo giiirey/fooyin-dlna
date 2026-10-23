@@ -1,6 +1,6 @@
 # AGENTS.md
 
-fooyin 0.13.x plugin (C++20, Qt 6, CMake) that browses DLNA/UPnP servers and plays their streams. Single artifact: `build/dlna/fyplugin_dlna.so`. It is not a standalone app — it only runs inside fooyin.
+fooyin 0.14.x plugin (C++20, Qt 6, CMake) that browses DLNA/UPnP servers and plays their streams. Single artifact: `build/dlna/fyplugin_dlna.so`. It is not a standalone app — it only runs inside fooyin.
 
 ## Build
 
@@ -19,7 +19,7 @@ fooyin 0.13.x plugin (C++20, Qt 6, CMake) that browses DLNA/UPnP servers and pla
 
 ## CI / release constraints
 
-- CI (`.github/workflows/build.yml`) builds on `debian:bookworm` against fooyin `v0.13.1` — the oldest supported baseline — because the released `.so` must stay forward-compatible with newer distros (Qt 6 / glibc / libstdc++). Don't build against a newer baseline for releases.
+- CI (`.github/workflows/build.yml`) builds on `debian:bookworm` against fooyin `v0.14.1` — the oldest supported baseline — because the released `.so` must stay forward-compatible with newer distros (Qt 6 / glibc / libstdc++). Don't build against a newer baseline for releases.
 - Releases publish on tags `v*.*.*` only (see workflow).
 
 ## Architecture notes

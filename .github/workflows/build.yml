@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  FOOYIN_VERSION: v0.13.1
+  FOOYIN_VERSION: v0.14.1
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 jobs:

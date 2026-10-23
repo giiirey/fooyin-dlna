@@ -1,6 +1,6 @@
 # fooyin-dlna
 
-A plugin for [fooyin](https://fooyin.org/) 0.13.x: browse and play audio from DLNA/UPnP servers.
+A plugin for [fooyin](https://fooyin.org/) 0.14.x: browse and play audio from DLNA/UPnP servers.
 
 ## Features
 
@@ -24,11 +24,11 @@ cp fyplugin_dlna.so ~/.local/lib/fooyin/plugins/
 
 Restart fooyin. Menu entry: **View → DLNA Browser**.
 
-No extra packages are needed: the binary links against the Qt 6 and fooyin libraries your system already has. It is built against the oldest supported fooyin/Qt baseline (Debian 12), so the same `.so` works on every distro that ships fooyin 0.13.x (Debian, Ubuntu, Fedora, Arch, openSUSE, ...).
+No extra packages are needed: the binary links against the Qt 6 and fooyin libraries your system already has. It is built against the oldest supported fooyin/Qt baseline (Debian 12), so the same `.so` works on every distro that ships fooyin 0.14.x (Debian, Ubuntu, Fedora, Arch, openSUSE, ...).
 
 ### Build from source
 
-Requirements: CMake ≥ 3.16, Qt 6 (Core, Network, Widgets), fooyin 0.13.x installed with headers and CMake configuration.
+Requirements: CMake ≥ 3.16, Qt 6 (Core, Network, Widgets), fooyin 0.14.x installed with headers and CMake configuration.
 
 ```sh
 cmake -B build
