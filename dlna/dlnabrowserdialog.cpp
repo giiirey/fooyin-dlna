@@ -86,6 +86,13 @@ QString serversFilePath()
     return Utils::statePath(u"dlna"_s) + u"/dlna_servers.json"_s;
 }
 
+constexpr int MaxPathDepth = 128;
+
+QString stateFilePath()
+{
+    return Utils::statePath(u"dlna"_s) + u"/dlna_state.json"_s;
+}
+
 QString codecName(const QString& mimeType)
 {
     const QString m = mimeType.toLower();
@@ -228,12 +235,19 @@ DlnaBrowserDialog::DlnaBrowserDialog(QNetworkAccessManager* network, TrackSelect
     connect(m_controller, &DlnaBrowserController::connected, this, &DlnaBrowserDialog::onConnected);
     connect(m_controller, &DlnaBrowserController::connectFailed, this, &DlnaBrowserDialog::onConnectFailed);
     connect(m_controller, &DlnaBrowserController::childrenLoaded, this, &DlnaBrowserDialog::onChildrenLoaded);
+    connect(m_controller, &DlnaBrowserController::subtreeLoaded, this, &DlnaBrowserDialog::onSubtreeLoaded);
 
     loadServers();
+    loadState();
     refreshServerCombo();
     if(!m_servers.isEmpty()) {
-        // Reconnect to the most recently used server automatically.
-        m_serverCombo->setCurrentIndex(m_servers.size() - 1);
+        // Prefer the server the remembered folder path belongs to, so that the
+        // last opened folder can be restored on startup.
+        int index = indexOfServer(m_lastServer);
+        if(index < 0) {
+            index = static_cast<int>(m_servers.size()) - 1;
+        }
+        m_serverCombo->setCurrentIndex(index);
         onConnect();
     }
 }
@@ -313,9 +327,11 @@ void DlnaBrowserDialog::setupUi()
     connect(m_table, &QTableView::doubleClicked, this, [this](const QModelIndex&) { playSelected(); });
     connect(m_tree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
         const QString objectId = item->data(0, Qt::UserRole).toString();
-        if(!objectId.isEmpty()) {
-            loadContainer(objectId);
+        if(objectId.isEmpty()) {
+            return;
         }
+        loadContainer(objectId);
+        rememberPath(item);
     });
     connect(m_tree, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
@@ -323,9 +339,11 @@ void DlnaBrowserDialog::setupUi()
                     return;
                 }
                 const QString objectId = current->data(0, Qt::UserRole).toString();
-                if(!objectId.isEmpty()) {
-                    loadContainer(objectId);
+                if(objectId.isEmpty()) {
+                    return;
                 }
+                showFolderFiles(objectId);
+                rememberPath(current);
             });
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this,
             [this](const QItemSelection&, const QItemSelection&) { updateActionState(); });
@@ -338,12 +356,18 @@ void DlnaBrowserDialog::onConnect()
         setStatus(tr("Enter a server address."));
         return;
     }
+    m_lastServer = hostPort;
+    m_restorePath = m_paths.value(hostPort);
+    m_restoring = !m_restorePath.isEmpty();
     m_tree->clear();
     m_treeItems.clear();
     m_itemsModel->setEntries({});
     m_connected = false;
     m_pendingObjectId.clear();
     m_loadedObjects.clear();
+    m_subtreeCache.clear();
+    m_subtreeExceeded.clear();
+    m_activeSubtreeWalk.clear();
     m_connectButton->setEnabled(false);
     m_controller->connectServer(hostPort);
 }
@@ -479,6 +503,134 @@ void DlnaBrowserDialog::persistServers()
     file.write(QJsonDocument(array).toJson(QJsonDocument::Compact));
 }
 
+QStringList DlnaBrowserDialog::containerPath(const QTreeWidgetItem* item) const
+{
+    QStringList path;
+    for(const QTreeWidgetItem* it = item; it; it = it->parent()) {
+        const QString id = it->data(0, Qt::UserRole).toString();
+        if(!id.isEmpty()) {
+            path.prepend(id);
+        }
+    }
+    if(static_cast<int>(path.size()) > MaxPathDepth) {
+        path = path.mid(static_cast<int>(path.size()) - MaxPathDepth);
+    }
+    return path;
+}
+
+void DlnaBrowserDialog::rememberPath(const QTreeWidgetItem* item)
+{
+    // Skip while restoring, otherwise the restore itself would shorten the
+    // remembered path step by step.
+    if(m_restoring || !item) {
+        return;
+    }
+    const QString address = currentServerAddress();
+    const QString objectId = item->data(0, Qt::UserRole).toString();
+    if(address.isEmpty() || objectId.isEmpty()) {
+        return;
+    }
+    const QStringList path = containerPath(item);
+    if(m_paths.value(address) == path) {
+        return;
+    }
+    m_paths.insert(address, path);
+    m_lastServer = address;
+    persistState();
+}
+
+void DlnaBrowserDialog::continueRestore()
+{
+    if(m_restorePath.isEmpty()) {
+        m_restoring = false;
+        return;
+    }
+    const QString objectId = m_restorePath.front();
+    QTreeWidgetItem* item = findTreeItem(objectId);
+    if(!item) {
+        // The folder no longer exists on this server (renamed, reindexed, or the
+        // path was remembered for another one): keep what has been expanded.
+        m_restoring = false;
+        m_restorePath.clear();
+        return;
+    }
+    m_restorePath.removeFirst();
+    m_tree->expandItem(item);
+    loadContainer(objectId);
+    if(m_restorePath.isEmpty()) {
+        m_restoring = false;
+        m_tree->setCurrentItem(item);
+    }
+}
+
+int DlnaBrowserDialog::indexOfServer(const QString& address) const
+{
+    for(int i = 0; i < static_cast<int>(m_servers.size()); ++i) {
+        if(m_servers.at(i).address == address) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void DlnaBrowserDialog::loadState()
+{
+    const QString path = stateFilePath();
+    QFile file{path};
+    if(!file.open(QIODevice::ReadOnly)) {
+        return;
+    }
+
+    QJsonParseError error{};
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    if(error.error != QJsonParseError::NoError || !document.isObject()) {
+        return;
+    }
+
+    const QJsonObject obj = document.object();
+    m_lastServer = obj.value(u"last_server"_s).toString().trimmed();
+    const QJsonObject paths = obj.value(u"paths"_s).toObject();
+    for(auto it = paths.begin(); it != paths.end(); ++it) {
+        QStringList folderPath;
+        for(const QJsonValue& value : it.value().toArray()) {
+            const QString id = value.toString().trimmed();
+            if(!id.isEmpty()) {
+                folderPath.push_back(id);
+            }
+        }
+        if(!folderPath.isEmpty()) {
+            m_paths.insert(it.key(), folderPath);
+        }
+    }
+}
+
+void DlnaBrowserDialog::persistState()
+{
+    QJsonObject paths;
+    for(auto it = m_paths.constBegin(); it != m_paths.constEnd(); ++it) {
+        QJsonArray array;
+        for(const QString& id : it.value()) {
+            array.append(id);
+        }
+        paths.insert(it.key(), array);
+    }
+
+    QJsonObject obj;
+    obj[u"last_server"_s] = m_lastServer;
+    obj[u"paths"_s] = paths;
+
+    const QString path = stateFilePath();
+    if(!QDir().mkpath(path.mid(0, path.lastIndexOf(u'/')))) {
+        return;
+    }
+
+    QFile file{path};
+    if(!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+    file.write(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
 void DlnaBrowserDialog::refreshServerCombo()
 {
     // Remember which address should stay selected across the rebuild
@@ -550,18 +702,27 @@ void DlnaBrowserDialog::onChildrenLoaded(const QString& objectId, const DlnaEntr
     m_loadedObjects.insert(objectId);
 
     DlnaEntryList containers;
-    DlnaEntryList items;
     for(const DlnaEntry& e : entries) {
         if(e.isContainer) {
             containers.push_back(e);
         }
-        else {
-            items.push_back(e);
-        }
     }
-
     addContainerItems(objectId, containers);
-    setTableEntries(items);
+
+    if(m_restoring) {
+        // Restore walks the remembered path one level per browse response,
+        // since tree items only exist once their parent has been browsed.
+        // Only the finally selected folder gets a subtree walk, so the levels
+        // on the way there are not walked. This response is the folder's own
+        // level, so it seeds the walk and the folder is not fetched twice.
+        if(m_restorePath.isEmpty()) {
+            showFolderFiles(objectId, entries);
+        }
+        continueRestore();
+    }
+    else {
+        showFolderFiles(objectId, entries);
+    }
 }
 
 void DlnaBrowserDialog::addContainerItems(const QString& parentObjectId, const DlnaEntryList& containers)
@@ -573,8 +734,9 @@ void DlnaBrowserDialog::addContainerItems(const QString& parentObjectId, const D
         item->setData(0, Qt::UserRole, c.id);
         m_treeItems.insert(c.id, item);
     }
-    // Expand the first level for convenience.
-    if(parentObjectId == u"0"_s) {
+    // Expand the first level for convenience. During a restore only the
+    // remembered chain is expanded, so that no unrelated browse is issued.
+    if(parentObjectId == u"0"_s && !m_restoring) {
         m_tree->expandAll();
     }
 }
@@ -592,6 +754,48 @@ void DlnaBrowserDialog::loadContainer(const QString& objectId)
     }
     m_pendingObjectId = objectId;
     m_controller->browseChildren(objectId);
+}
+
+void DlnaBrowserDialog::showFolderFiles(const QString& objectId, const DlnaEntryList& seed)
+{
+    if(!m_connected || objectId.isEmpty()) {
+        return;
+    }
+    if(m_subtreeCache.contains(objectId)) {
+        DlnaEntryList shown;
+        if(!m_subtreeExceeded.contains(objectId)) {
+            shown = m_subtreeCache.value(objectId);
+        }
+        setTableEntries(shown);
+        return;
+    }
+    if(m_activeSubtreeWalk == objectId) {
+        return; // walk already in flight; its response fills the cache
+    }
+    if(!m_loadedObjects.contains(objectId)) {
+        // Fetch the level once; the response seeds the walk, so this folder
+        // is not fetched twice.
+        loadContainer(objectId);
+        return;
+    }
+    m_activeSubtreeWalk = objectId;
+    m_controller->browseSubtree(objectId, seed);
+}
+
+void DlnaBrowserDialog::onSubtreeLoaded(const QString& objectId, const DlnaEntryList& entries, bool exceeded)
+{
+    if(objectId != m_activeSubtreeWalk) {
+        return; // response from a superseded walk
+    }
+    m_activeSubtreeWalk.clear();
+    // A folder over the walk limits shows nothing, without a status message.
+    if(exceeded) {
+        m_subtreeExceeded.insert(objectId);
+        setTableEntries({});
+        return;
+    }
+    m_subtreeCache.insert(objectId, entries);
+    setTableEntries(entries);
 }
 
 void DlnaBrowserDialog::setTableEntries(const DlnaEntryList& items)

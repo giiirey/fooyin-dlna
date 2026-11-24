@@ -10,6 +10,7 @@ A plugin for [fooyin](https://fooyin.org/) 0.14.x: browse and play audio from DL
 - Pagination for large lists (500 items per request).
 - Send tracks: Play (temporary playlist + start playback), Add (to the current playlist), Queue (to the queue).
 - fooyin plays HTTP streams natively — no custom decoder is needed.
+- The last opened folder is remembered per server and restored (expanded and selected) on startup.
 
 ## Installation
 

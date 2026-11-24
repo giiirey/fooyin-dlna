@@ -60,6 +60,11 @@ void DlnaBrowserController::connectServer(const QString& hostPort)
 {
     m_connecting = true;
     m_browse.reset();
+    m_subtreeBrowse.reset();
+    ++m_subtreeToken; // invalidate callbacks of a walk in flight
+    m_subtreeItems.clear();
+    m_subtreeQueue.clear();
+    m_subtreeVisited = 0;
     m_info = {};
     Q_EMIT connecting(hostPort);
     m_device.resolve(hostPort);
@@ -78,10 +83,111 @@ void DlnaBrowserController::browseChildren(const QString& objectId)
         });
 }
 
+void DlnaBrowserController::browseSubtree(const QString& objectId, const DlnaEntryList& entries)
+{
+    if(!m_subtreeBrowse || objectId.isEmpty()) {
+        return;
+    }
+    // Supersede any walk in flight: its callbacks check the token.
+    ++m_subtreeToken;
+    m_subtreeRoot = objectId;
+    m_subtreeItems.clear();
+    m_subtreeQueue.clear();
+    m_subtreeVisited = 0;
+    if(entries.empty()) {
+        m_subtreeQueue.push_back({objectId, 0});
+        fetchNextSubtreeContainer(m_subtreeToken);
+    }
+    else {
+        processSubtreeLevel(m_subtreeToken, objectId, 0, entries);
+    }
+}
+
+void DlnaBrowserController::processSubtreeLevel(int token, const QString& id, int depth,
+                                                const DlnaEntryList& entries)
+{
+    if(token != m_subtreeToken) {
+        return;
+    }
+    for(const DlnaEntry& entry : entries) {
+        if(entry.isContainer) {
+            if(depth + 1 > MaxSubtreeDepth) {
+                // Items below this depth are not counted, so completeness cannot
+                // be established: treat the folder as too large.
+                finishSubtreeWalk(token, {}, true);
+                return;
+            }
+            m_subtreeQueue.push_back({entry.id, depth + 1});
+        }
+        else {
+            m_subtreeItems.push_back(entry);
+            if(static_cast<int>(m_subtreeItems.size()) > MaxSubtreeItems) {
+                finishSubtreeWalk(token, {}, true);
+                return;
+            }
+        }
+    }
+    fetchNextSubtreeContainer(token);
+}
+
+void DlnaBrowserController::fetchNextSubtreeContainer(int token)
+{
+    if(token != m_subtreeToken) {
+        return;
+    }
+    if(m_subtreeQueue.empty()) {
+        finishSubtreeWalk(token, m_subtreeItems, false);
+        return;
+    }
+    if(m_subtreeVisited >= MaxSubtreeContainers) {
+        finishSubtreeWalk(token, {}, true);
+        return;
+    }
+    const auto [id, depth] = m_subtreeQueue.front();
+    m_subtreeQueue.erase(m_subtreeQueue.begin());
+    ++m_subtreeVisited;
+    m_subtreeBrowse->loadChildren(id, [this, token, id, depth](const DlnaEntryList& entries, bool ok,
+                                                                const QString&) {
+        if(token != m_subtreeToken) {
+            return;
+        }
+        if(!ok) {
+            // The walk was interrupted; completeness cannot be proven.
+            finishSubtreeWalk(token, {}, true);
+            return;
+        }
+        processSubtreeLevel(token, id, depth, entries);
+    });
+}
+
+void DlnaBrowserController::finishSubtreeWalk(int token, const DlnaEntryList& entries, bool exceeded)
+{
+    if(token != m_subtreeToken) {
+        return;
+    }
+    m_subtreeQueue.clear();
+
+    DlnaEntryList result;
+    result.reserve(entries.size());
+    for(const DlnaEntry& entry : entries) {
+        DlnaEntry copy = entry;
+        copy.serverBase = m_info.base;
+        result.push_back(std::move(copy));
+    }
+    // entries may alias m_subtreeItems, so copy first and clear afterwards.
+    m_subtreeItems.clear();
+    Q_EMIT subtreeLoaded(m_subtreeRoot, result, exceeded);
+}
+
 void DlnaBrowserController::reset()
 {
     m_device.reset();
     m_browse.reset();
+    m_subtreeBrowse.reset();
+    ++m_subtreeToken; // invalidate callbacks of a walk in flight
+    m_subtreeItems.clear();
+    m_subtreeQueue.clear();
+    m_subtreeVisited = 0;
     m_info = {};
     m_connecting = false;
 }
@@ -96,6 +202,7 @@ void DlnaBrowserController::handleResolved(const DlnaDeviceInfo& info)
 
     m_info = info;
     m_browse = std::make_unique<DlnaBrowse>(m_network, QUrl{info.controlUrl}, this);
+    m_subtreeBrowse = std::make_unique<DlnaBrowse>(m_network, QUrl{info.controlUrl}, this);
     Q_EMIT connected(info);
 }
 

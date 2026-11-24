@@ -34,6 +34,7 @@
 #include <QHash>
 #include <QList>
 #include <QSet>
+#include <QStringList>
 
 class QAction;
 class QComboBox;
@@ -117,9 +118,11 @@ private:
     void onConnected(const DlnaDeviceInfo& info);
     void onConnectFailed(const QString& error);
     void onChildrenLoaded(const QString& objectId, const DlnaEntryList& entries, bool ok, const QString& error);
+    void onSubtreeLoaded(const QString& objectId, const DlnaEntryList& entries, bool exceeded);
     void addContainerItems(const QString& parentObjectId, const DlnaEntryList& containers);
     QTreeWidgetItem* findTreeItem(const QString& objectId) const;
     void loadContainer(const QString& objectId);
+    void showFolderFiles(const QString& objectId, const DlnaEntryList& seed = {});
     void setTableEntries(const DlnaEntryList& items);
     void playSelected();
     void addToPlaylist();
@@ -128,10 +131,16 @@ private:
     void updateActionState();
     void loadServers();
     void persistServers();
+    void loadState();
+    void persistState();
     void refreshServerCombo();
     void onAddServer();
     void onRemoveServer();
     void rememberServer(const QString& address, const QString& name);
+    void rememberPath(const QTreeWidgetItem* item);
+    void continueRestore();
+    [[nodiscard]] QStringList containerPath(const QTreeWidgetItem* item) const;
+    [[nodiscard]] int indexOfServer(const QString& address) const;
     [[nodiscard]] bool addCurrentPlaylistEnabled() const;
     [[nodiscard]] DlnaEntryList selectedEntries() const;
     [[nodiscard]] QString currentServerAddress() const;
@@ -159,8 +168,19 @@ private:
 
     QHash<QString, QTreeWidgetItem*> m_treeItems;
     QSet<QString> m_loadedObjects;
+    // Completed subtree walk results per folder; folders that do not fit the
+    // controller's walk limits are remembered in m_subtreeExceeded and show
+    // nothing silently.
+    QHash<QString, DlnaEntryList> m_subtreeCache;
+    QSet<QString> m_subtreeExceeded;
+    QString m_activeSubtreeWalk;
     QString m_pendingObjectId;
     QList<DlnaServerRecord> m_servers;
+    // Last opened folder per server: object ids from the root down to the folder.
+    QHash<QString, QStringList> m_paths;
+    QString m_lastServer;
+    QStringList m_restorePath;
+    bool m_restoring{false};
     bool m_connected{false};
 };
 } // namespace Fooyin::Dlna
